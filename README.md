@@ -294,6 +294,3 @@ Mit **Offline-Geolokalisierung (MaxMind)**, optionalem **Online-Fallback**, **rD
 - **Healthcheck-Mails** → `PW_NOTIFY_IGNORE_LOOPBACK=1` (und ggf. `PW_LOG_IGNORE_SUPPRESSED=1`)  
 - **Timezone/Warnings** → bereits timezone-aware; `PW_TZ` setzen
 
-## Lizenz
-
-Privat/Intern. Bei Bedarf anpassen.
