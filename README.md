@@ -21,10 +21,10 @@ Includes **offline geolocation (MaxMind)** with an optional online fallback, **r
 ## Architecture
 
 - **portwatcher** (app): `/app/portwatcher.py` listens on the port and sends notifications
-- **geoipupdate** (sidecar): downloads/refreshes MaxMind DBs into a **shared volume** `/var/lib/GeoIP`
+- **geoipupdate** (sidecar): downloads/refreshes MaxMind DBs into a **shared volume** `/usr/share/GeoIP`
 
 ```txt
-[geoipupdate] ──writes──>  [volume: /var/lib/GeoIP]  <──reads── [portwatcher]
+[geoipupdate] ──writes──>  [volume: /usr/share/GeoIP]  <──reads── [portwatcher]
 ```
 
 ---
@@ -60,10 +60,10 @@ services:
     env_file:
       - geoipupdate.env
     volumes:
-      - geoip-db:/var/lib/GeoIP
+      - geoip-db:/usr/share/GeoIP
     # optional (empfohlen)
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -f /var/lib/GeoIP/GeoLite2-City.mmdb -a -f /var/lib/GeoIP/GeoLite2-ASN.mmdb"]
+      test: ["CMD", "sh", "-c", "test -f /usr/share/GeoIP/GeoLite2-City.mmdb -a -f /usr/share/GeoIP/GeoLite2-ASN.mmdb"]
       interval: 1m
       timeout: 5s
       retries: 3
@@ -81,7 +81,7 @@ services:
     ports:
       - "${PW_PORT:-5555}:${PW_PORT:-5555}/tcp"
     volumes:
-      - geoip-db:/var/lib/GeoIP
+      - geoip-db:/usr/share/GeoIP
     user: "10001:10001"
     read_only: true
     tmpfs:
@@ -134,7 +134,7 @@ All variables are documented in **`.env.example`**. Key groups:
 
 ### Geo / rDNS
 
-- **Offline:** `PW_GEOIP_CITY_DB=/var/lib/GeoIP/GeoLite2-City.mmdb`, `PW_GEOIP_ASN_DB=/var/lib/GeoIP/GeoLite2-ASN.mmdb`
+- **Offline:** `PW_GEOIP_CITY_DB=/usr/share/GeoIP/GeoLite2-City.mmdb`, `PW_GEOIP_ASN_DB=/usr/share/GeoIP/GeoLite2-ASN.mmdb`
 - **Online (optional):** `PW_IPAPI_ENABLE=0|1`, `PW_IPAPI_BUDGET_PER_MIN`
 - `PW_RDNS_ENABLE`, `PW_RDNS_TIMEOUT`
 
@@ -167,7 +167,7 @@ The simplified Dockerfile uses `python:3.12-slim` and installs `python3-geoip2` 
 
 ```bash
 docker build -t portwatcher:dev .
-docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/var/lib/GeoIP portwatcher:dev
+docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/usr/share/GeoIP portwatcher:dev
 ```
 
 ---
@@ -191,7 +191,7 @@ docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/var/lib/GeoIP port
 
 ## Troubleshooting
 
-- **Geo fields empty:** ensure DBs exist in the app container (`/var/lib/GeoIP`); check sidecar health.
+- **Geo fields empty:** ensure DBs exist in the app container (`/usr/share/GeoIP`); check sidecar health.
 - **`ModuleNotFoundError: geoip2`:** ensure the image contains `python3-geoip2` (APT) or `geoip2` (pip).
 - **Healthcheck messages/logs:** set `PW_NOTIFY_IGNORE_LOOPBACK=1` and optionally `PW_LOG_IGNORE_SUPPRESSED=1`.
 - **Timezone/UTC suffix:** set `PW_TZ`, optionally enable `PW_TS_INCLUDE_UTC`.

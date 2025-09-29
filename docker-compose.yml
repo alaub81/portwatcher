@@ -5,10 +5,10 @@ services:
     env_file:
       - geoipupdate.env
     volumes:
-      - geoip-db:/var/lib/GeoIP
+      - geoip-db:/usr/share/GeoIP
     # optional (empfohlen)
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -f /var/lib/GeoIP/GeoLite2-City.mmdb -a -f /var/lib/GeoIP/GeoLite2-ASN.mmdb"]
+      test: ["CMD", "sh", "-c", "test -f /usr/share/GeoIP/GeoLite2-City.mmdb -a -f /usr/share/GeoIP/GeoLite2-ASN.mmdb"]
       interval: 1m
       timeout: 5s
       retries: 3
@@ -26,7 +26,7 @@ services:
     ports:
       - "${PW_PORT:-5555}:${PW_PORT:-5555}/tcp"
     volumes:
-      - geoip-db:/var/lib/GeoIP
+      - geoip-db:/usr/share/GeoIP
     user: "10001:10001"
     read_only: true
     tmpfs:

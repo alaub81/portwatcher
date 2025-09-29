@@ -141,8 +141,8 @@ NTFY_PRIO   = _env_raw("PW_NTFY_PRIORITY", "5") # 1..5 oder min/low/default/high
 NTFY_TAGS   = _env_raw("PW_NTFY_TAGS", "rotating_light,shield") or "rotating_light,shield"
 
 # ========== Geo OFFLINE (MaxMind) with lazy/reload ==========
-GEOIP_CITY_DB = _env_raw("PW_GEOIP_CITY_DB", "")  # /var/lib/GeoIP/GeoLite2-City.mmdb
-GEOIP_ASN_DB  = _env_raw("PW_GEOIP_ASN_DB", "")   # /var/lib/GeoIP/GeoLite2-ASN.mmdb
+GEOIP_CITY_DB = _env_raw("PW_GEOIP_CITY_DB", "")  # /usr/share/GeoIP/GeoLite2-City.mmdb
+GEOIP_ASN_DB  = _env_raw("PW_GEOIP_ASN_DB", "")   # /usr/share/GeoIP/GeoLite2-ASN.mmdb
 _city_reader = None; _city_mtime = 0.0
 _asn_reader  = None; _asn_mtime  = 0.0
 _geo_lock    = threading.Lock()
