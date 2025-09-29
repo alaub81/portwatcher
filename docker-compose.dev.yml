@@ -20,7 +20,8 @@ services:
       start_period: 30s
 
   portwatcher:
-    image: ghcr.io/alaub81/portwatcher:latest
+    build: .
+    image: portwatcher:latest
     restart: unless-stopped
 
     env_file:
