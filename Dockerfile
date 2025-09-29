@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir "geoip2>=4,<5"
 # App-User & Verzeichnisse
 WORKDIR /app
 RUN adduser --disabled-password --gecos "" --home /app --uid 10001 app \
- && mkdir -p /var/lib/GeoIP \
- && chown -R app:app /app /var/lib/GeoIP
+ && mkdir -p /usr/share/GeoIP \
+ && chown -R app:app /app /usr/share/GeoIP
 
 # Dateien
 COPY --chown=app:app portwatcher.py /app/portwatcher.py
