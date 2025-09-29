@@ -1,296 +1,200 @@
 # Portwatcher
 
-Ein schlanker TCP-Watcher für Debian/Python, der eingehende Verbindungen erfasst und dich per **E-Mail** und **ntfy push** benachrichtigt.  
-Mit **Offline-Geolokalisierung (MaxMind)**, optionalem **Online-Fallback**, **rDNS**, **Cooldown pro IP**, **Healthcheck-/CIDR-Ignore**, **Payload-Snippet & Protokoll-Erkennung** (HTTP/TLS/SSH/…).
+A lightweight TCP watcher (Python/asyncio) that logs inbound connections and notifies you via **email** and **ntfy push**.  
+Includes **offline geolocation (MaxMind)** with an optional online fallback, **rDNS**, **per‑IP cooldown**, **healthcheck/CIDR ignore**, **payload snippet & protocol detection** (HTTP/TLS/SSH/…).
 
 ## Features
 
-- Lauscht auf frei wählbarem TCP-Port (IPv4/IPv6)
-- Benachrichtigung via **E-Mail** (SMTP) und **ntfy** (konfigurierbar)
-- **Betreff**: `DE Heidelberg 78.43.247.28` (ISO-Land, Ort/Region/Land, IP)
-- **Geodaten offline** via MaxMind **GeoLite2-City/ASN** (Sidecar aktualisiert Datenbanken)
-- **rDNS** (optional, kurzer Timeout)
-- **Cooldown pro IP** (Mail/Push-Stürme werden verhindert)
-- **Healthcheck-/lokale Netze ignorieren** – keine Benachrichtigungen und (optional) kein Logging
-- **Payload-Snippet** der ersten Bytes (Text/Hex/Base64; Länge & Modus per ENV)
-- **Protokoll-Erkennung** (HTTP Request-Line/Host/UA, TLS SNI/ALPN/optional JA3, SSH-Banner, VNC/RDP/Redis…)
-- Zeitstempel **timezone-aware** (Standard: `Europe/Berlin`, konfigurierbar)
+- Listens on a configurable TCP port (IPv4/IPv6)
+- Notifications via **email** (SMTP) and **ntfy** (toggle per channel)
+- Subject/title like `DE Heidelberg 78.43.247.28` (ISO country, city/region, IP)
+- **Offline geo** using MaxMind **GeoLite2-City/ASN** (sidecar keeps DBs fresh)
+- **rDNS** (short timeout, optional)
+- **Per-IP cooldown** to prevent mail/push storms
+- **Ignore** healthchecks and local/CIDR ranges (optionally also remove from logs)
+- **Payload snippet** (text/hex/base64, length-limited) + **protocol detection**: HTTP (method/host/UA), TLS (SNI/ALPN/optional JA3), SSH banner, VNC/RDP/Redis…
+- Timezone‑aware timestamps (default: `Europe/Berlin`)
+- Multi-arch container image on **GHCR** (`linux/amd64`, `linux/arm64`)
 
 ---
 
-## Architektur
+## Architecture
 
-- **portwatcher** (App-Container): Python-Service mit allen Features  
-- **geoipupdate** (Sidecar): lädt/aktualisiert MaxMind-Datenbanken regelmäßig in ein **shared Volume**  
-- **Volume** `/var/lib/GeoIP`: wird von beiden Containern gemeinsam genutzt
+- **portwatcher** (app): `/app/portwatcher.py` listens on the port and sends notifications
+- **geoipupdate** (sidecar): downloads/refreshes MaxMind DBs into a **shared volume** `/var/lib/GeoIP`
 
-```
+```txt
 [geoipupdate] ──writes──>  [volume: /var/lib/GeoIP]  <──reads── [portwatcher]
 ```
 
 ---
 
-## Voraussetzungen
+## Quick start
 
-- Docker & Docker Compose
-- MaxMind Account (kostenlos für **GeoLite2**) → **Account ID** & **License Key**
-- SMTP-Zugang (für E-Mail) und/oder ntfy-Topic
+1) **Clone** and enter the repo
+```bash
+git clone https://github.com/alaub81/portwatcher.git
+cd portwatcher
+```
+
+2) **Create configs** from the examples
+- Copy `.env.example` → `.env` and adjust (SMTP, ntfy, port, …)
+- Copy `geoipupdate.env.example` → `geoipupdate.env` and fill in your **MaxMind** Account/Key
+
+3) **Start with Docker Compose**
+```bash
+docker compose pull
+docker compose up -d
+docker compose logs -f portwatcher
+```
 
 ---
 
-## Repository-Struktur (Beispiel)
+## Docker Compose (excerpt)
 
+```yaml
+services:
+  geoipupdate:
+    image: ghcr.io/maxmind/geoipupdate:latest
+    restart: unless-stopped
+    env_file:
+      - geoipupdate.env
+    volumes:
+      - geoip-db:/var/lib/GeoIP
+    # optional (empfohlen)
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -f /var/lib/GeoIP/GeoLite2-City.mmdb -a -f /var/lib/GeoIP/GeoLite2-ASN.mmdb"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  portwatcher:
+    image: ghcr.io/alaub81/portwatcher:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${PW_TZ}
+      # vermeidet __pycache__-Writes auf read-only FS
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "${PW_PORT:-5555}:${PW_PORT:-5555}/tcp"
+    volumes:
+      - geoip-db:/var/lib/GeoIP
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile: 16384
+    depends_on:
+      geoipupdate:
+        #condition: service_started  # oder 'service_healthy' falls HC gesetzt
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  geoip-db:
 ```
-.
-├─ portwatcher.py
-├─ Dockerfile
-├─ docker-compose.yml
-├─ .env                # App-Umgebung (PW_* Variablen)
-└─ geoipupdate.env     # nur für den Sidecar (MaxMind)
+
+**Local dev / own build (optional):**  
+You can also build locally (Dockerfile included) or add a `docker-compose.dev.yml` override.
+
+---
+
+## Configuration
+
+All variables are documented in **`.env.example`**. Key groups:
+
+### Basics
+
+- `PW_HOST` (`0.0.0.0`) – bind address
+- `PW_PORT` (e.g. `1417`) – listen port
+- `PW_LOG_LEVEL` (`INFO`/`DEBUG`/…)
+- `PW_BANNER` – optional banner text sent to clients
+
+### Notifications
+
+- `PW_ENABLE_EMAIL`, `PW_ENABLE_PUSH`
+- **SMTP:** `PW_SMTP_SERVER`, `PW_SMTP_PORT`, `PW_SMTP_STARTTLS`, `PW_SMTP_USER`, `PW_SMTP_PASS` **or** `PW_SMTP_PASS_FILE`, `PW_MAIL_FROM`, `PW_MAIL_TO`
+- **ntfy:** `PW_NTFY_SERVER`, `PW_NTFY_TOPIC`, `PW_NTFY_PRIORITY`, `PW_NTFY_TAGS`
+
+### Geo / rDNS
+
+- **Offline:** `PW_GEOIP_CITY_DB=/var/lib/GeoIP/GeoLite2-City.mmdb`, `PW_GEOIP_ASN_DB=/var/lib/GeoIP/GeoLite2-ASN.mmdb`
+- **Online (optional):** `PW_IPAPI_ENABLE=0|1`, `PW_IPAPI_BUDGET_PER_MIN`
+- `PW_RDNS_ENABLE`, `PW_RDNS_TIMEOUT`
+
+### Ignore / Healthchecks
+
+- `PW_NOTIFY_IGNORE_LOOPBACK=1` – mute 127.0.0.0/8, ::1
+- `PW_NOTIFY_IGNORE_PRIVATES=0|1` – mute RFC1918/link-local
+- `PW_NOTIFY_IGNORE_CIDRS="172.24.0.0/16,::1/128"` – custom ranges
+- `PW_LOG_IGNORE_SUPPRESSED=1` – also remove suppressed events from logs
+
+### Payload & detection
+
+- `PW_CAPTURE_PAYLOAD=1`, `PW_PROBE_MAX_BYTES` (default 2048), `PW_PROBE_TIMEOUT_MS` (default 800)
+- `PW_PAYLOAD_IN_NOTIF=1`, `PW_PAYLOAD_MAX_CHARS` (default 600), `PW_PAYLOAD_MODE=auto|text|hex|base64`, `PW_PAYLOAD_STRIP_CONTROL=1`
+- `PW_TLS_JA3=0|1` – optional TLS JA3 fingerprint
+
+### Rate-limit, time, detail fields
+
+- `PW_RL_COOLDOWN_S` (default 1800), `PW_RL_FORGET_S` (default 86400)
+- `PW_TZ=Europe/Berlin`, `PW_TS_INCLUDE_UTC=0|1`
+- `PW_INCLUDE_CITY=1`, `PW_INCLUDE_COORDS=0`, `PW_LATLON_PRECISION=2`
+
+> **Note:** `.env` and `geoipupdate.env` are **gitignored**. Examples are tracked: `.env.example`, `geoipupdate.env.example`.
+
+---
+
+## Local build (optional)
+
+The simplified Dockerfile uses `python:3.12-slim` and installs `python3-geoip2` via APT.
+
+```bash
+docker build -t portwatcher:dev .
+docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/var/lib/GeoIP portwatcher:dev
 ```
 
 ---
 
-## Installation & Start
+## CI/CD (GitHub Actions)
 
-1. **.env** (App) erstellen/anpassen:
-   ```env
-   PW_HOST=0.0.0.0
-   PW_PORT=1417
-   PW_MAX_CONCURRENCY=200
-   PW_LOG_LEVEL=INFO
-   PW_BANNER=
+- **CI:** Python syntax check & Docker build (no push)
+- **Release:** Buildx (driver `docker-container`) + push to **GHCR** (`ghcr.io/alaub81/portwatcher:{latest,SHA}`), optional multi-arch
 
-   PW_ENABLE_EMAIL=1
-   PW_ENABLE_PUSH=1
+> Tip: In repo **Settings → Actions → Workflow permissions**, set **Read and write** so `GITHUB_TOKEN` can push to GHCR.
 
-   # SMTP
-   PW_SMTP_SERVER=mx.example.de
-   PW_SMTP_PORT=587
-   PW_SMTP_STARTTLS=1
-   PW_SMTP_USER=user@example.de
-   PW_SMTP_PASS=CHANGE_ME        # oder per Secret: PW_SMTP_PASS_FILE=/run/secrets/smtp_pass
-   PW_MAIL_FROM=portwatch@example.de
-   PW_MAIL_TO=you@example.de
+---
 
-   # ntfy
-   PW_NTFY_SERVER=https://ntfy.sh
-   PW_NTFY_TOPIC=your-topic
-   PW_NTFY_PRIORITY=5
-   PW_NTFY_TAGS=rotating_light,shield
+## Security
 
-   # Geo (offline)
-   PW_GEOIP_CITY_DB=/var/lib/GeoIP/GeoLite2-City.mmdb
-   PW_GEOIP_ASN_DB=/var/lib/GeoIP/GeoLite2-ASN.mmdb
+- Never commit secrets. Use `.env` (gitignored), `PW_SMTP_PASS_FILE` (Docker Secrets), or Actions secrets.
+- Container runs **non-root**, filesystem **read-only**, `cap_drop: [ALL]`, `no-new-privileges`.
+- Payload snippets are length‑limited and control chars are sanitized; consider header redaction if needed.
 
-   # Optionaler Online-Fallback (standard: aus)
-   PW_IPAPI_ENABLE=0
-   PW_IPAPI_BUDGET_PER_MIN=40
-
-   # rDNS
-   PW_RDNS_ENABLE=1
-   PW_RDNS_TIMEOUT=1.0
-
-   # Detailfelder
-   PW_INCLUDE_CITY=1
-   PW_INCLUDE_COORDS=0
-   PW_LATLON_PRECISION=2
-
-   # Rate-Limit (Cooldown)
-   PW_RL_COOLDOWN_S=1800
-   PW_RL_FORGET_S=86400
-   PW_CACHE_SIZE=20000
-
-   # Zeiten
-   PW_TZ=Europe/Berlin
-   PW_TS_INCLUDE_UTC=0
-
-   # Healthchecks/Netze ignorieren
-   PW_NOTIFY_IGNORE_LOOPBACK=1
-   # PW_NOTIFY_IGNORE_PRIVATES=1
-   # PW_NOTIFY_IGNORE_CIDRS=172.24.0.0/16,::1/128
-   PW_LOG_IGNORE_SUPPRESSED=1
-
-   # Payload-Erfassung
-   PW_CAPTURE_PAYLOAD=1
-   PW_PROBE_MAX_BYTES=2048
-   PW_PROBE_TIMEOUT_MS=800
-   PW_PAYLOAD_IN_NOTIF=1
-   PW_PAYLOAD_MAX_CHARS=600
-   PW_PAYLOAD_MODE=auto        # auto|text|hex|base64
-   PW_PAYLOAD_STRIP_CONTROL=1
-   # PW_TLS_JA3=1
-   ```
-
-2. **geoipupdate.env** (nur Sidecar):
-   ```
-   GEOIPUPDATE_ACCOUNT_ID=YOUR_ID
-   GEOIPUPDATE_LICENSE_KEY=YOUR_KEY
-   GEOIPUPDATE_EDITION_IDS=GeoLite2-City GeoLite2-ASN
-   GEOIPUPDATE_FREQUENCY=24
-   GEOIPUPDATE_DB_DIR=/var/lib/GeoIP
-   ```
-
-3. **docker-compose.yml** (Beispiel):
-   ```yaml
-   services:
-     geoipupdate:
-       image: ghcr.io/maxmind/geoipupdate:latest
-       restart: unless-stopped
-       env_file:
-         - ./geoipupdate.env
-       volumes:
-         - geoip-db:/var/lib/GeoIP
-       healthcheck:
-         test: ["CMD", "sh", "-c", "test -f /var/lib/GeoIP/GeoLite2-City.mmdb -a -f /var/lib/GeoIP/GeoLite2-ASN.mmdb"]
-         interval: 1m
-         timeout: 5s
-         retries: 3
-         start_period: 30s
-
-     portwatcher:
-       build: .
-       image: portwatcher:latest
-       restart: unless-stopped
-
-       env_file:
-         - ./.env
-       environment:
-         TZ: ${PW_TZ}
-         PYTHONDONTWRITEBYTECODE: "1"
-
-       ports:
-         - "${PW_PORT:-5555}:${PW_PORT:-5555}/tcp"
-
-       volumes:
-         - geoip-db:/var/lib/GeoIP
-
-       user: "10001:10001"
-       read_only: true
-       tmpfs:
-         - /tmp
-       cap_drop:
-         - ALL
-       security_opt:
-         - no-new-privileges:true
-       ulimits:
-         nofile: 16384
-
-       depends_on:
-         geoipupdate:
-           condition: service_started
-
-       healthcheck:
-         test:
-           - CMD
-           - python3
-           - -c
-           - >
-             import os,socket,sys;
-             p=int(os.environ.get('PW_PORT','5555'));
-             ok=0;
-             # v4
-             try:
-               s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); s.settimeout(2); s.connect(('127.0.0.1',p)); s.close(); ok=1
-             except Exception:
-               pass
-             # v6
-             if not ok:
-               try:
-                 s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM); s.settimeout(2); s.connect(('::1',p)); s.close(); ok=1
-               except Exception:
-                 pass
-             sys.exit(0 if ok else 1)
-         interval: 30s
-         timeout: 5s
-         retries: 3
-
-   volumes:
-     geoip-db:
-   ```
-
-4. **Dockerfile** (App-Image):
-   ```dockerfile
-   FROM python:3.12-slim
-   RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata python3-geoip2 \
-    && rm -rf /var/lib/apt/lists/*
-
-   WORKDIR /app
-   RUN adduser --disabled-password --gecos "" --home /app --uid 10001 app
-   COPY --chown=app:app portwatcher.py /app/portwatcher.py
-   USER app
-   EXPOSE 5555/tcp
-   CMD ["python3", "/app/portwatcher.py"]
-   ```
-
-5. **Build & Run**
-   ```bash
-   docker compose build
-   docker compose up -d
-   docker compose logs -f portwatcher
-   ```
-
-## Testen
-
-- **HTTP**:
-  ```bash
-  curl -v http://<DEINE-IP>:1417/
-  ```
-- **TLS**:
-  ```bash
-  openssl s_client -connect <DEINE-IP>:1417 -servername test.example
-  ```
-- **SSH**:
-  ```bash
-  ssh -p 1417 <DEINE-IP>
-  ```
-
-## Konfiguration (ENV-Referenz)
-
-### Basis
-| Variable | Default | Beschreibung |
-|---|---:|---|
-| `PW_HOST` | `0.0.0.0` | Bind-Adresse (für IPv6 `::`) |
-| `PW_PORT` | `1417` | Port |
-| `PW_MAX_CONCURRENCY` | `200` | gleichzeitige Handler |
-| `PW_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/… |
-| `PW_BANNER` | `""` | optionaler Banner-Text an Clients (roh) |
-
-### Benachrichtigungen
-`PW_ENABLE_EMAIL`, `PW_ENABLE_PUSH`  
-**E-Mail (SMTP):** `PW_SMTP_SERVER`, `PW_SMTP_PORT`, `PW_SMTP_STARTTLS`, `PW_SMTP_USER`, `PW_SMTP_PASS`/`PW_SMTP_PASS_FILE`, `PW_MAIL_FROM`, `PW_MAIL_TO`  
-**ntfy:** `PW_NTFY_SERVER`, `PW_NTFY_TOPIC`, `PW_NTFY_PRIORITY`, `PW_NTFY_TAGS`
-
-### Geo
-`PW_GEOIP_CITY_DB`, `PW_GEOIP_ASN_DB`, `PW_IPAPI_ENABLE`, `PW_IPAPI_BUDGET_PER_MIN`, `PW_GEO_ALLOW_PRIVATE`
-
-### rDNS & Details
-`PW_RDNS_ENABLE`, `PW_RDNS_TIMEOUT`, `PW_INCLUDE_CITY`, `PW_INCLUDE_COORDS`, `PW_LATLON_PRECISION`
-
-### Rate-Limit & Cache
-`PW_RL_COOLDOWN_S`, `PW_RL_FORGET_S`, `PW_CACHE_SIZE`
-
-### Zeit
-`PW_TZ`, `PW_TS_INCLUDE_UTC`
-
-### Healthchecks/Ignore
-`PW_NOTIFY_IGNORE_LOOPBACK`, `PW_NOTIFY_IGNORE_PRIVATES`, `PW_NOTIFY_IGNORE_CIDRS`, `PW_LOG_IGNORE_SUPPRESSED`
-
-### Payload/Erkennung
-`PW_CAPTURE_PAYLOAD`, `PW_PROBE_MAX_BYTES`, `PW_PROBE_TIMEOUT_MS`,  
-`PW_PAYLOAD_IN_NOTIF`, `PW_PAYLOAD_MAX_CHARS`, `PW_PAYLOAD_MODE`, `PW_PAYLOAD_STRIP_CONTROL`, `PW_TLS_JA3`
-
-## Sicherheit
-
-- SMTP-Passwort am besten per Docker **Secret** (`PW_SMTP_PASS_FILE`)  
-- Container läuft als Non-Root; Filesystem read-only; `no-new-privileges`; `cap_drop: [ALL]`  
-- Payload-Snippets limitiert & maskiert; bei Bedarf Header-Redaction ergänzen
+---
 
 ## Troubleshooting
 
-- **geoip2 fehlt** → App-Image muss `python3-geoip2` (APT) oder `geoip2` (pip) enthalten  
-- **Geo-Felder leer** → prüfen, ob DBs unter `/var/lib/GeoIP` vorhanden sind  
-- **Healthcheck-Mails** → `PW_NOTIFY_IGNORE_LOOPBACK=1` (und ggf. `PW_LOG_IGNORE_SUPPRESSED=1`)  
-- **Timezone/Warnings** → bereits timezone-aware; `PW_TZ` setzen
+- **Geo fields empty:** ensure DBs exist in the app container (`/var/lib/GeoIP`); check sidecar health.
+- **`ModuleNotFoundError: geoip2`:** ensure the image contains `python3-geoip2` (APT) or `geoip2` (pip).
+- **Healthcheck messages/logs:** set `PW_NOTIFY_IGNORE_LOOPBACK=1` and optionally `PW_LOG_IGNORE_SUPPRESSED=1`.
+- **Timezone/UTC suffix:** set `PW_TZ`, optionally enable `PW_TS_INCLUDE_UTC`.
+- **GHA cache error (“docker driver”):** set up Buildx with `driver: docker-container`.
 
+---
