@@ -4,9 +4,10 @@ services:
     restart: unless-stopped
     env_file:
       - geoipupdate.env
+    environment:
+      TZ: ${PW_TZ}  
     volumes:
       - geoip-db:/usr/share/GeoIP
-    # optional (empfohlen)
     healthcheck:
       test: ["CMD", "sh", "-c", "test -f /usr/share/GeoIP/GeoLite2-City.mmdb -a -f /usr/share/GeoIP/GeoLite2-ASN.mmdb"]
       interval: 1m
@@ -18,6 +19,7 @@ services:
     image: ghcr.io/alaub81/portwatcher:latest
     restart: unless-stopped
     env_file:
+      - portwatcher.env
       - .env
     environment:
       TZ: ${PW_TZ}

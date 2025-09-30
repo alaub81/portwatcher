@@ -32,16 +32,20 @@ Includes **offline geolocation (MaxMind)** with an optional online fallback, **r
 ## Quick start
 
 1) **Clone** and enter the repo
+
 ```bash
 git clone https://github.com/alaub81/portwatcher.git
 cd portwatcher
 ```
 
 2) **Create configs** from the examples
-- Copy `.env.example` → `.env` and adjust (SMTP, ntfy, port, …)
+
+- Copy `.env.example` → `.env` and adjust (port, timezone …)
+- Copy `portwatcher.env.example` → `portwatcher.env` and adjust (SMTP, ntfy, …)
 - Copy `geoipupdate.env.example` → `geoipupdate.env` and fill in your **MaxMind** Account/Key
 
 3) **Start with Docker Compose**
+
 ```bash
 docker compose pull
 docker compose up -d
@@ -59,9 +63,10 @@ services:
     restart: unless-stopped
     env_file:
       - geoipupdate.env
+    environment:
+      TZ: ${PW_TZ}  
     volumes:
       - geoip-db:/usr/share/GeoIP
-    # optional (empfohlen)
     healthcheck:
       test: ["CMD", "sh", "-c", "test -f /usr/share/GeoIP/GeoLite2-City.mmdb -a -f /usr/share/GeoIP/GeoLite2-ASN.mmdb"]
       interval: 1m
@@ -73,6 +78,7 @@ services:
     image: ghcr.io/alaub81/portwatcher:latest
     restart: unless-stopped
     env_file:
+      - portwatcher.env
       - .env
     environment:
       TZ: ${PW_TZ}
@@ -117,12 +123,11 @@ You can also build locally (Dockerfile included) or add a `docker-compose.dev.ym
 
 ## Configuration
 
-All variables are documented in **`.env.example`**. Key groups:
+All variables are documented in **`*.env.example`** files. Key groups:
 
 ### Basics
 
 - `PW_HOST` (`0.0.0.0`) – bind address
-- `PW_PORT` (e.g. `1417`) – listen port
 - `PW_LOG_LEVEL` (`INFO`/`DEBUG`/…)
 - `PW_BANNER` – optional banner text sent to clients
 
@@ -163,7 +168,7 @@ All variables are documented in **`.env.example`**. Key groups:
 
 ## Local build (optional)
 
-The simplified Dockerfile uses `python:3.12-slim` and installs `python3-geoip2` via APT.
+The simplified Dockerfile uses `python:3.13-slim` and installs `python3-geoip2` via APT.
 
 ```bash
 docker build -t portwatcher:dev .
@@ -183,7 +188,7 @@ docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/usr/share/GeoIP po
 
 ## Security
 
-- Never commit secrets. Use `.env` (gitignored), `PW_SMTP_PASS_FILE` (Docker Secrets), or Actions secrets.
+- Never commit secrets. Use `*.env` (gitignored), `PW_SMTP_PASS_FILE` (Docker Secrets), or Actions secrets.
 - Container runs **non-root**, filesystem **read-only**, `cap_drop: [ALL]`, `no-new-privileges`.
 - Payload snippets are length‑limited and control chars are sanitized; consider header redaction if needed.
 

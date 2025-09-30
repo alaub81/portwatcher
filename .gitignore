@@ -1,3 +1,4 @@
 .env
 .archive
 geoipupdate.env
+portwatcher.env
