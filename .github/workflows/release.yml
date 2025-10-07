@@ -41,6 +41,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          pull: true
           # falls du nur amd64 willst: platforms: linux/amd64
           platforms: linux/amd64,linux/arm64
           tags: |
