@@ -1,53 +1,240 @@
-name: Release Image
+name: Release (build & push)
 
-on:
+'on':
   push:
-    branches: [main]
-    tags: ['v*.*.*']  # SemVer-Tags pushen ebenfalls
+    tags:
+      - 'v*.*.*'            # SemVer-Tags
+  workflow_dispatch:
+    inputs:
+      rebuild_tags:
+        description: 'Rebuild last N tags'
+        required: false
+        default: false
+        type: boolean
+      num_tags:
+        description: 'How many recent tags to rebuild'
+        required: false
+        default: 3
+        type: number
   schedule:
-    - cron: '17 01 * * 2'   # weekly rebuild (Mon 03:17 UTC)
+    - cron: '0 1 * * 2'     # Dienstag 01:00 UTC
 
 permissions:
   contents: read
   packages: write
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: release-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-push:
+  # (A) TAG-REBUILD: nur bei Cron oder manuell (rebuild_tags=true)
+  select-tags:
+    if: ${{ github.event_name == 'schedule' || inputs.rebuild_tags }}
     runs-on: ubuntu-latest
+    outputs:
+      tags_json: ${{ steps.out.outputs.tags_json }}
     steps:
-      - uses: actions/checkout@v5
-
-      # optional, wenn du multi-arch bauen willst (arm64 für Raspberry Pi)
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      # WICHTIG: Buildx als docker-container-Driver
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v6
         with:
-          install: true
-          driver: docker-container
+          fetch-depth: 0
 
-      - name: Log in to GHCR
+      - id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          num="${{ inputs.num_tags }}"
+          [ -z "${num}" ] && num=3
+
+          TAGS="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n "${num}")"
+          printf 'Selected tags:\n%s\n' "${TAGS}"
+
+          # >>> HIER ist der wichtige Teil <<<
+          JSON_TAGS="$(printf '%s\n' "${TAGS}" | jq -R . | jq -s -c .)"
+          echo "tags_json=${JSON_TAGS}" >> "$GITHUB_OUTPUT"
+
+  rebuild:
+    needs: select-tags
+    if: ${{ needs.select-tags.outputs.tags_json != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.select-tags.outputs.tags_json) }}
+        image:
+          - name: 'portwatcher'
+            dockerfile: 'Dockerfile'
+            context: '.'
+
+    steps:
+      - name: Checkout at tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.tag }}
+          fetch-depth: 0
+
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta (reuse exact tag)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
+          tags: |
+            type=raw,value=${{ matrix.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+
+      # Pre-build (amd64) zum Scannen, nicht pushen
+      - name: Build (scan image)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          pull: true               # aktualisiert Base-Image
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: scan:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy FS (SARIF)
+        uses: aquasecurity/trivy-action@0.33.1
+        continue-on-error: true
+        with:
+          scan-type: fs
+          format: sarif
+          output: trivy-fs.sarif
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Upload FS SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs-rebuild
+
+      - name: Trivy Image (gate)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: scan:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Build & Push (multi-arch, overwrite tag)
+        if: ${{ success() }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # (B) KLASSISCHER RELEASE: nur bei Tag-Push
+  release:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: 'portwatcher'
+            dockerfile: 'Dockerfile'
+            context: '.'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta (semver + latest)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+
+      # Pre-build (amd64) zum Scannen
+      - name: Pre-build (load for scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          pull: true
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: scan:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy Image (SARIF)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: scan:${{ github.sha }}
+          format: sarif
+          output: trivy-release.sarif
+          exit-code: '0'
+          hide-progress: true
+
+      - name: Trivy Image (enforce severity)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: scan:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          hide-progress: true
 
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          pull: true
-          # falls du nur amd64 willst: platforms: linux/amd64
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/portwatcher:latest
-            ghcr.io/${{ github.repository_owner }}/portwatcher:${{ github.sha }}
+          pull: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # optional: provenance abschalten, wenn du keine SBOM/Attestations brauchst
-          # provenance: false
