@@ -36,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tags_json: ${{ steps.out.outputs.tags_json }}
+      latest_tag: ${{ steps.out.outputs.latest_tag }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -52,9 +53,13 @@ jobs:
           TAGS="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n "${num}")"
           printf 'Selected tags:\n%s\n' "${TAGS}"
 
-          # >>> HIER ist der wichtige Teil <<<
+          # Tags als JSON
           JSON_TAGS="$(printf '%s\n' "${TAGS}" | jq -R . | jq -s -c .)"
           echo "tags_json=${JSON_TAGS}" >> "$GITHUB_OUTPUT"
+
+          # NEUSTER Tag (erste Zeile der sortierten Liste)
+          LATEST_TAG="$(printf '%s\n' "${TAGS}" | head -n 1)"
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
 
   rebuild:
     needs: select-tags
@@ -95,7 +100,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
           tags: |
+            # immer: der konkrete Tag (v1.4.0, v1.3.0, ...)
             type=raw,value=${{ matrix.tag }}
+            # nur für den "neuesten" Tag: zusätzlich latest
+            type=raw,value=latest,enable=${{ matrix.tag == needs.select-tags.outputs.latest_tag }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
