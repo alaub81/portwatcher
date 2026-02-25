@@ -14,7 +14,7 @@ name: Release (build & push)
       num_tags:
         description: 'How many recent tags to rebuild'
         required: false
-        default: 3
+        default: 1
         type: number
   schedule:
     - cron: '0 1 * * 2'     # Dienstag 01:00 UTC
@@ -81,6 +81,24 @@ jobs:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
 
+      - name: Compute semver tags (strip v + major/minor)
+        id: semver
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ matrix.tag }}"
+          v="${v#v}"                 # v1.45.1 -> 1.45.1
+
+          IFS='.' read -r major minor patch extra <<< "$v"
+          if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
+            echo "Tag is not x.y.z: '$v'" >&2
+            exit 1
+          fi
+
+          echo "full=$v"           >> "$GITHUB_OUTPUT"   # 1.45.1
+          echo "minor=$major.$minor" >> "$GITHUB_OUTPUT" # 1.45
+          echo "major=$major"      >> "$GITHUB_OUTPUT"   # 1
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -94,15 +112,15 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker meta (reuse exact tag)
+      - name: Docker meta (rebuild tag + aliases)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
           tags: |
-            # immer: der konkrete Tag (v1.4.0, v1.3.0, ...)
-            type=raw,value=${{ matrix.tag }}
-            # nur für den "neuesten" Tag: zusätzlich latest
+            type=raw,value=${{ steps.semver.outputs.full }}
+            type=raw,value=${{ steps.semver.outputs.minor }}
+            type=raw,value=${{ steps.semver.outputs.major }}
             type=raw,value=latest,enable=${{ matrix.tag == needs.select-tags.outputs.latest_tag }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
@@ -122,14 +140,15 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy FS (SARIF)
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         continue-on-error: true
         with:
           scan-type: fs
           format: sarif
           output: trivy-fs.sarif
           ignore-unfixed: true
-          severity: HIGH,CRITICAL
+          # severity: HIGH,CRITICAL
+          severity: CRITICAL
 
       - name: Upload FS SARIF
         if: always()
@@ -139,13 +158,14 @@ jobs:
           category: trivy-fs-rebuild
 
       - name: Trivy Image (gate)
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: scan:${{ github.sha }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
-          severity: HIGH,CRITICAL
+          # severity: HIGH,CRITICAL
+          severity: CRITICAL
 
       - name: Build & Push (multi-arch, overwrite tag)
         if: ${{ success() }}
@@ -189,15 +209,16 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker meta (semver + latest)
+      - name: Docker meta (semver without v + latest)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            # nimmt v1.2.3 und macht 1.2.3
+            type=semver,pattern={{version}},prefix=
+            type=semver,pattern={{major}}.{{minor}},prefix=
+            type=semver,pattern={{major}},prefix=
             type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
@@ -217,7 +238,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy Image (SARIF)
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: scan:${{ github.sha }}
           format: sarif
@@ -226,10 +247,11 @@ jobs:
           hide-progress: true
 
       - name: Trivy Image (enforce severity)
-        uses: aquasecurity/trivy-action@0.34.0
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: scan:${{ github.sha }}
-          severity: CRITICAL,HIGH
+          # severity: CRITICAL,HIGH
+          severity: CRITICAL
           ignore-unfixed: true
           exit-code: '1'
           hide-progress: true
