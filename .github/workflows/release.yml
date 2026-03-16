@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
 
           num="${{ inputs.num_tags }}"
-          [ -z "${num}" ] && num=3
+          [ -z "${num}" ] && num=1
 
           TAGS="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n "${num}")"
           printf 'Selected tags:\n%s\n' "${TAGS}"
