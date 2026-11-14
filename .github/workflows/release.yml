@@ -71,8 +71,8 @@ jobs:
         tag: ${{ fromJSON(needs.select-tags.outputs.tags_json) }}
         image:
           - name: 'portwatcher'
-            dockerfile: 'Dockerfile'
-            context: '.'
+            dockerfile: 'resources/portwatcher/Dockerfile'
+            context: 'resources/portwatcher'
 
     steps:
       - name: Checkout at tag
@@ -80,6 +80,28 @@ jobs:
         with:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
+
+      - name: Resolve image build context
+        id: build_paths
+        env:
+          DOCKERFILE: ${{ matrix.image.dockerfile }}
+          BUILD_CONTEXT: ${{ matrix.image.context }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dockerfile="$DOCKERFILE"
+          context="$BUILD_CONTEXT"
+          # Historical tags still use the previous root-level build context.
+          if [[ ! -f "$dockerfile" ]]; then
+            dockerfile=Dockerfile
+            context=.
+          fi
+          test -f "$dockerfile"
+          test -d "$context"
+          {
+            echo "dockerfile=$dockerfile"
+            echo "context=$context"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Compute semver tags (strip v + major/minor)
         id: semver
@@ -129,8 +151,8 @@ jobs:
       - name: Build (scan image)
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.image.context }}
-          file: ${{ matrix.image.dockerfile }}
+          context: ${{ steps.build_paths.outputs.context }}
+          file: ${{ steps.build_paths.outputs.dockerfile }}
           pull: true               # aktualisiert Base-Image
           push: false
           load: true
@@ -191,8 +213,8 @@ jobs:
         if: ${{ success() }}
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.image.context }}
-          file: ${{ matrix.image.dockerfile }}
+          context: ${{ steps.build_paths.outputs.context }}
+          file: ${{ steps.build_paths.outputs.dockerfile }}
           platforms: linux/amd64,linux/arm64
           pull: true
           push: true
@@ -210,8 +232,8 @@ jobs:
       matrix:
         image:
           - name: 'portwatcher'
-            dockerfile: 'Dockerfile'
-            context: '.'
+            dockerfile: 'resources/portwatcher/Dockerfile'
+            context: 'resources/portwatcher'
 
     steps:
       - uses: actions/checkout@v7

@@ -17,7 +17,9 @@ updates:
 
   # 2) Docker (Dockerfiles + docker-compose.*)
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/resources/portwatcher"
     schedule:
       interval: "weekly"
       day: "monday"

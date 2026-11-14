@@ -24,7 +24,7 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: .
+          context: resources/portwatcher
           load: true
           tags: portwatcher:test
 

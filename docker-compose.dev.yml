@@ -16,7 +16,9 @@ services:
       start_period: 30s
 
   portwatcher:
-    build: .
+    build:
+      context: ./resources/portwatcher
+      dockerfile: Dockerfile
     image: portwatcher:latest
     restart: unless-stopped
     env_file:

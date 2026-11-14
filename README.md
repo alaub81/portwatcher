@@ -171,7 +171,7 @@ All variables are documented in **`*.env.example`** files. Key groups:
 The simplified Dockerfile uses `python:3.13-slim` and installs `python3-geoip2` via APT.
 
 ```bash
-docker build -t portwatcher:dev .
+docker build -t portwatcher:dev resources/portwatcher
 docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/usr/share/GeoIP portwatcher:dev
 ```
 
@@ -203,3 +203,8 @@ docker run --rm -it -p 1417:1417 --env-file .env -v geoip-db:/usr/share/GeoIP po
 - **GHA cache error (“docker driver”):** set up Buildx with `driver: docker-container`.
 
 ---
+
+Image build inputs live in `resources/portwatcher/`, including the Dockerfile and
+its `.dockerignore`. Compose, runtime configuration and repository tooling remain
+outside the image context.
+Release rebuilds also support the previous layout when building historical tags.
