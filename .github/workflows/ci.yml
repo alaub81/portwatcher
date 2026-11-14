@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,7 +20,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
         with:
-          install: true
           driver: docker-container
 
       - uses: docker/build-push-action@v7
@@ -24,3 +27,31 @@ jobs:
           context: .
           load: true
           tags: portwatcher:test
+
+      - name: Trivy Image (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: portwatcher:test
+          format: sarif
+          output: trivy-ci.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Trivy Image (gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: portwatcher:test
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload SARIF
+        if: >-
+          ${{ always() && github.event.repository.private == false &&
+              hashFiles('trivy-ci.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-ci.sarif
+          category: trivy-image-ci-portwatcher

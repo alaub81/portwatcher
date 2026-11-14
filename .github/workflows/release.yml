@@ -146,16 +146,19 @@ jobs:
           scan-type: fs
           format: sarif
           output: trivy-fs.sarif
-          ignore-unfixed: true
-          # severity: HIGH,CRITICAL
-          severity: CRITICAL
+          ignore-unfixed: false
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: '0'
 
-      - name: Upload FS SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Trivy Image (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          sarif_file: trivy-fs.sarif
-          category: trivy-fs-rebuild
+          image-ref: scan:${{ github.sha }}
+          format: sarif
+          output: trivy-rebuild.sarif
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
 
       - name: Trivy Image (gate)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -164,8 +167,25 @@ jobs:
           format: table
           exit-code: '1'
           ignore-unfixed: true
-          # severity: HIGH,CRITICAL
-          severity: CRITICAL
+          severity: HIGH,CRITICAL
+
+      - name: Upload SARIF
+        if: >-
+          ${{ always() && github.event.repository.private == false &&
+              hashFiles('trivy-fs.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs-rebuild-${{ matrix.image.name }}-${{ matrix.tag }}
+
+      - name: Upload SARIF
+        if: >-
+          ${{ always() && github.event.repository.private == false &&
+              hashFiles('trivy-rebuild.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-rebuild.sarif
+          category: trivy-image-rebuild-${{ matrix.image.name }}-${{ matrix.tag }}
 
       - name: Build & Push (multi-arch, overwrite tag)
         if: ${{ success() }}
@@ -244,17 +264,25 @@ jobs:
           format: sarif
           output: trivy-release.sarif
           exit-code: '0'
-          hide-progress: true
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
 
       - name: Trivy Image (enforce severity)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: scan:${{ github.sha }}
-          # severity: CRITICAL,HIGH
-          severity: CRITICAL
+          severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
-          hide-progress: true
+
+      - name: Upload SARIF
+        if: >-
+          ${{ always() && github.event.repository.private == false &&
+              hashFiles('trivy-release.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-release.sarif
+          category: trivy-image-release-${{ matrix.image.name }}
 
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v7
